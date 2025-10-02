@@ -9,6 +9,86 @@
 ensureLoggedIn();
 
 const SCHEDULE_KEY = 'schedules';
+// === Sheets backend integration ===
+let SCHEDULE_CACHE = []; // in-memory cache from backend
+let SCHEDULE_CACHE_LOADED = false;
+
+async function backendLoadSchedules() {
+  // Optionally, you can set a date window; for now load all
+  const rows = await SheetsAPI.listSchedules({});
+  // Normalize rows into the UI's record shape
+  SCHEDULE_CACHE = rows.map(r => {
+    const s = new Date(r.StartISO);
+    const e = new Date(r.EndISO || r.StartISO);
+    const y = s.getFullYear();
+    const m = String(s.getMonth()+1).padStart(2,'0');
+    const d = String(s.getDate()).padStart(2,'0');
+    const hh = String(s.getHours()).padStart(2,'0');
+    const mm = String(s.getMinutes()).padStart(2,'0');
+    const ey = e.getFullYear();
+    const em = String(e.getMonth()+1).padStart(2,'0');
+    const ed = String(e.getDate()).padStart(2,'0');
+    const ehh = String(e.getHours()).padStart(2,'0');
+    const emm = String(e.getMinutes()).padStart(2,'0');
+    return {
+      id: r.ID,
+      startDate: `${y}-${m}-${d}`,
+      startTime: `${hh}:${mm}`,
+      endDate: `${ey}-${em}-${ed}`,
+      endTime: `${ehh}:${emm}`,
+      description: r.Description || '',
+      name: r.Name || '',
+      appointmentType: r.Kind || 'Other'
+    };
+  });
+  SCHEDULE_CACHE_LOADED = true;
+  return SCHEDULE_CACHE;
+}
+
+async function backendCreate(record) {
+  // convert UI record -> backend row
+  const StartISO = `${record.startDate}T${record.startTime}`;
+  const EndISO = `${record.endDate}T${record.endTime}`;
+  const created = await SheetsAPI.createSchedule({
+    StartISO, EndISO,
+    Kind: record.appointmentType,
+    Description: record.description,
+    Name: record.name
+  });
+  // reflect ID in cache
+  record.id = created.ID;
+  SCHEDULE_CACHE.push(record);
+}
+
+async function backendUpdate(index, record) {
+  const id = record.id || SCHEDULE_CACHE[index]?.id;
+  if (!id) throw new Error('Missing record ID for update');
+  const StartISO = `${record.startDate}T${record.startTime}`;
+  const EndISO = `${record.endDate}T${record.endTime}`;
+  await SheetsAPI.updateSchedule({
+    ID: id,
+    StartISO, EndISO,
+    Kind: record.appointmentType,
+    Description: record.description,
+    Name: record.name,
+    Deleted: false
+  });
+  // update cache
+  SCHEDULE_CACHE[index] = { ...record, id };
+}
+
+async function backendDelete(index) {
+  const id = SCHEDULE_CACHE[index]?.id;
+  if (!id) return;
+  await SheetsAPI.deleteSchedule(id);
+  SCHEDULE_CACHE.splice(index, 1);
+}
+
+// Helper to use cache instead of localStorage
+function getSchedules() {
+  return SCHEDULE_CACHE.slice();
+}
+
 
 // Define appointment categories and their colours
 const APPOINTMENT_TYPES = [
@@ -41,7 +121,7 @@ let scheduleCalendar;
  * appointment type, and the full record in extendedProps for later use.
  */
 function transformSchedulesToEvents() {
-  const list = getItems(SCHEDULE_KEY);
+  const list = getSchedules();
   return list.map((item, index) => ({
     title: item.description,
     start: `${item.startDate}T${item.startTime}`,
@@ -219,7 +299,7 @@ function formatDateTimeForDisplay(dateObj) {
 }
 
 // Save appointment (add or edit) from modal
-function handleModalSave(e) {
+async function handleModalSave(e) {
   e.preventDefault();
   const startInput = document.getElementById('modal-start');
   const descInput = document.getElementById('modal-desc');
@@ -271,7 +351,7 @@ function handleModalSave(e) {
     return;
   }
   // Check overlap with existing events
-  const existing = getItems(SCHEDULE_KEY);
+  const existing = getSchedules();
   const newStart = startDateObj;
   const newEnd = endDateObj;
   const overlap = existing.some((item, idx) => {
@@ -285,12 +365,12 @@ function handleModalSave(e) {
     return;
   }
   if (currentModalMode === 'add') {
-    saveItem(SCHEDULE_KEY, record);
+    await backendCreate(record);
   } else if (currentModalMode === 'edit' && currentEventIndex !== null) {
     // Update existing record
-    const list = getItems(SCHEDULE_KEY);
+    const list = getSchedules();
     list[currentEventIndex] = record;
-    localStorage.setItem(SCHEDULE_KEY, JSON.stringify(list));
+    // persisted by backend
   }
   closeAppointmentModal();
   renderSchedules();
@@ -299,7 +379,7 @@ function handleModalSave(e) {
 // Handle deletion from modal
 function handleModalDelete() {
   if (currentModalMode === 'edit' && currentEventIndex !== null) {
-    deleteItem(SCHEDULE_KEY, currentEventIndex);
+    await backendDelete(currentEventIndex);
     closeAppointmentModal();
     renderSchedules();
   }
@@ -323,7 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Initialise the calendar and render existing schedules on load
 initCalendar();
-renderSchedules();
+(async () => { await backendLoadSchedules(); renderSchedules(); })();
 
 // Mini calendar functionality has been removed.
 
