@@ -377,7 +377,7 @@ async function handleModalSave(e) {
 }
 
 // Handle deletion from modal
-function handleModalDelete() {
+async function handleModalDelete() {
   if (currentModalMode === 'edit' && currentEventIndex !== null) {
     await backendDelete(currentEventIndex);
     closeAppointmentModal();
