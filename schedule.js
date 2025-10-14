@@ -1,8 +1,7 @@
 /*
  * Page-specific logic for managing boat/trailer moves.  This script
- * handles adding new moves to localStorage and rendering the list
- * of existing moves.  Each move includes a date, time, description
- * and boat/trailer details.
+ * handles adding new moves to Google Sheets via the proxy-backed API
+ * and rendering the list on the calendar.
  */
 
 // Ensure the user is authenticated before allowing interaction
@@ -107,13 +106,8 @@ APPOINTMENT_TYPES.forEach(item => {
   TYPE_COLOURS[item.name] = item.color;
 });
 
-// No filtering of appointment types is needed.  All events are always visible.
-// Previously we tracked selected categories to filter events; this has been removed.
-
 // FullCalendar instance for this page
 let scheduleCalendar;
-
-// Mini calendar has been removed; no global reference needed.
 
 /**
  * Convert stored schedule items into FullCalendar event objects.  Each
@@ -154,7 +148,6 @@ function initCalendar() {
       const d = String(arg.date.getDate());
       return { html: `<div class="nm-dow">${dow}</div><div class="nm-date">${m}/${d}</div>` };
     },
-    // (Removed previous: dayHeaderFormat)
 
     events: transformSchedulesToEvents(),
     headerToolbar: {
@@ -180,7 +173,6 @@ function initCalendar() {
       // Start day 0 = Sunday, 6 = Saturday
       return selectInfo.start.getDay() !== 0;
     },
-    // When the calendar date range changes we used to sync the mini calendar; no longer needed.
     eventDidMount: function (info) {
       // Colour assignment is already handled by the event definition. No filtering here.
     },
@@ -212,12 +204,9 @@ function refreshCalendar() {
 }
 
 /**
- * Render the list of scheduled moves from localStorage.  Also
- * refreshes the calendar events once complete.
+ * Render the list of scheduled moves (now just refreshes the calendar).
  */
 function renderSchedules() {
-  // In this simplified version, we no longer display a list of appointments.
-  // We simply refresh the events on the calendar to reflect any additions or edits.
   refreshCalendar();
 }
 
@@ -251,11 +240,8 @@ function openAppointmentModal(mode, data) {
   populateModalAppointmentOptions();
   if (mode === 'add') {
     modalTitle.textContent = 'New Appointment';
-    // data.start is a Date object representing the beginning of the slot
-    const startDateTime = data.start;
-    // Format as readable string
+    const startDateTime = data.start; // Date object
     startInput.value = formatDateTimeForDisplay(startDateTime);
-    // store start date/time for saving later in hidden dataset
     startInput.dataset.iso = startDateTime.toISOString();
     descInput.value = '';
     nameInput.value = '';
@@ -265,7 +251,6 @@ function openAppointmentModal(mode, data) {
   } else if (mode === 'edit' && data.event) {
     modalTitle.textContent = 'Edit Appointment';
     const rec = data.event.extendedProps.record;
-    // Compose a Date from stored startDate and startTime
     const startDT = new Date(`${rec.startDate}T${rec.startTime}`);
     startInput.value = formatDateTimeForDisplay(startDT);
     startInput.dataset.iso = startDT.toISOString();
@@ -307,6 +292,7 @@ async function handleModalSave(e) {
   const typeSelect = document.getElementById('modal-type');
   const startISO = startInput.dataset.iso;
   const startDateObj = new Date(startISO);
+
   // compute start date/time in local timezone
   const startYear = startDateObj.getFullYear();
   const startMonth = String(startDateObj.getMonth() + 1).padStart(2, '0');
@@ -315,6 +301,7 @@ async function handleModalSave(e) {
   const startMinutes = String(startDateObj.getMinutes()).padStart(2, '0');
   const startDate = `${startYear}-${startMonth}-${startDay}`;
   const startTime = `${startHours}:${startMinutes}`;
+
   // compute end time as start + 30 minutes in local timezone
   const endDateObj = new Date(startDateObj.getTime() + 30 * 60000);
   const endYear = endDateObj.getFullYear();
@@ -324,15 +311,17 @@ async function handleModalSave(e) {
   const endMinutes = String(endDateObj.getMinutes()).padStart(2, '0');
   const endDate = `${endYear}-${endMonth}-${endDay}`;
   const endTime = `${endHours}:${endMinutes}`;
+
   const record = {
-    startDate: startDate,
-    startTime: startTime,
-    endDate: endDate,
-    endTime: endTime,
+    startDate,
+    startTime,
+    endDate,
+    endTime,
     description: descInput.value.trim(),
     name: nameInput.value.trim(),
     appointmentType: typeSelect.value
   };
+
   // basic validation
   if (!record.description || !record.name) {
     alert('Please provide a description and name.');
@@ -364,24 +353,28 @@ async function handleModalSave(e) {
     alert('This appointment overlaps with an existing one.');
     return;
   }
+
   if (currentModalMode === 'add') {
     await backendCreate(record);
   } else if (currentModalMode === 'edit' && currentEventIndex !== null) {
-    // Update existing record
-    const list = getSchedules();
-    list[currentEventIndex] = record;
-    // persisted by backend
+    // Preserve ID for update, send to backend
+    record.id = SCHEDULE_CACHE[currentEventIndex]?.id;
+    await backendUpdate(currentEventIndex, record);
   }
-  closeAppointmentModal();
+
+  // Reload from backend to ensure UI matches canonical data
+  await backendLoadSchedules();
   renderSchedules();
+  closeAppointmentModal();
 }
 
 // Handle deletion from modal
 async function handleModalDelete() {
   if (currentModalMode === 'edit' && currentEventIndex !== null) {
     await backendDelete(currentEventIndex);
-    closeAppointmentModal();
+    await backendLoadSchedules();
     renderSchedules();
+    closeAppointmentModal();
   }
 }
 
@@ -405,9 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
 initCalendar();
 (async () => { await backendLoadSchedules(); renderSchedules(); })();
 
-// Mini calendar functionality has been removed.
-
-// Render the legend of appointment types with checkboxes for filtering
+// Render the legend of appointment types
 function renderLegend() {
   const legendEl = document.getElementById('legend');
   if (!legendEl) return;
@@ -428,11 +419,6 @@ function renderLegend() {
     legendEl.appendChild(wrap);
   });
 }
-
-// Refresh event visibility according to selected categories
-// No need for refreshCalendarDisplay when filtering is removed.
-
-// There is no static appointment form now, so no need to populate select at load.
 
 // Initialise legend on load
 renderLegend();
