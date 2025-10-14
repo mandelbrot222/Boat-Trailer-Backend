@@ -13,9 +13,7 @@ let SCHEDULE_CACHE = []; // in-memory cache from backend
 let SCHEDULE_CACHE_LOADED = false;
 
 async function backendLoadSchedules() {
-  // Optionally, you can set a date window; for now load all
   const rows = await SheetsAPI.listSchedules({});
-  // Normalize rows into the UI's record shape
   SCHEDULE_CACHE = rows.map(r => {
     const s = new Date(r.StartISO);
     const e = new Date(r.EndISO || r.StartISO);
@@ -45,7 +43,6 @@ async function backendLoadSchedules() {
 }
 
 async function backendCreate(record) {
-  // convert UI record -> backend row
   const StartISO = `${record.startDate}T${record.startTime}`;
   const EndISO = `${record.endDate}T${record.endTime}`;
   const created = await SheetsAPI.createSchedule({
@@ -54,7 +51,6 @@ async function backendCreate(record) {
     Description: record.description,
     Name: record.name
   });
-  // reflect ID in cache
   record.id = created.ID;
   SCHEDULE_CACHE.push(record);
 }
@@ -72,7 +68,6 @@ async function backendUpdate(index, record) {
     Name: record.name,
     Deleted: false
   });
-  // update cache
   SCHEDULE_CACHE[index] = { ...record, id };
 }
 
@@ -83,13 +78,10 @@ async function backendDelete(index) {
   SCHEDULE_CACHE.splice(index, 1);
 }
 
-// Helper to use cache instead of localStorage
 function getSchedules() {
   return SCHEDULE_CACHE.slice();
 }
 
-
-// Define appointment categories and their colours
 const APPOINTMENT_TYPES = [
   { name: 'Launch', color: '#007F7E' },
   { name: 'Water Haul In', color: '#4577D5' },
@@ -100,20 +92,11 @@ const APPOINTMENT_TYPES = [
   { name: 'Other', color: '#7A7A7A' }
 ];
 
-// Map for quick colour lookup
 const TYPE_COLOURS = {};
-APPOINTMENT_TYPES.forEach(item => {
-  TYPE_COLOURS[item.name] = item.color;
-});
+APPOINTMENT_TYPES.forEach(item => { TYPE_COLOURS[item.name] = item.color; });
 
-// FullCalendar instance for this page
 let scheduleCalendar;
 
-/**
- * Convert stored schedule items into FullCalendar event objects.  Each
- * event includes start and end times, a coloured background based on
- * appointment type, and the full record in extendedProps for later use.
- */
 function transformSchedulesToEvents() {
   const list = getSchedules();
   return list.map((item, index) => ({
@@ -122,99 +105,54 @@ function transformSchedulesToEvents() {
     end: `${item.endDate}T${item.endTime}`,
     backgroundColor: TYPE_COLOURS[item.appointmentType] || TYPE_COLOURS['Other'],
     borderColor: TYPE_COLOURS[item.appointmentType] || TYPE_COLOURS['Other'],
-    extendedProps: {
-      record: item,
-      appointmentType: item.appointmentType,
-      index: index
-    }
+    extendedProps: { record: item, appointmentType: item.appointmentType, index }
   }));
 }
 
-/**
- * Initialise the FullCalendar instance and render it into the
- * element with id "calendar".  This should only be called once.
- */
 function initCalendar() {
   const calendarEl = document.getElementById('calendar');
   if (!calendarEl) return;
   scheduleCalendar = new FullCalendar.Calendar(calendarEl, {
     initialView: 'timeGridWeek',
     height: 'auto',
-
-    // Force a consistent two-line header (Day above Date)
     dayHeaderContent: (arg) => {
-      const dow = arg.date.toLocaleDateString([], { weekday: 'short' }); // e.g., Tue
+      const dow = arg.date.toLocaleDateString([], { weekday: 'short' });
       const m = String(arg.date.getMonth() + 1);
       const d = String(arg.date.getDate());
       return { html: `<div class="nm-dow">${dow}</div><div class="nm-date">${m}/${d}</div>` };
     },
-
     events: transformSchedulesToEvents(),
-    headerToolbar: {
-      left: 'prev,next today',
-      center: 'title',
-      right: ''
-    },
+    headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
     slotDuration: '00:30:00',
     slotMinTime: '07:00:00',
     slotMaxTime: '16:00:00',
     allDaySlot: false,
-    businessHours: {
-      daysOfWeek: [1, 2, 3, 4, 5, 6], // Monday through Saturday
-      startTime: '07:00',
-      endTime: '16:00'
-    },
+    businessHours: { daysOfWeek: [1,2,3,4,5,6], startTime: '07:00', endTime: '16:00' },
     eventOverlap: false,
     selectable: true,
     selectOverlap: false,
     editable: false,
-    // Determine if a selection is allowed (no Sundays)
-    selectAllow: function(selectInfo) {
-      // Start day 0 = Sunday, 6 = Saturday
-      return selectInfo.start.getDay() !== 0;
-    },
-    eventDidMount: function (info) {
-      // Colour assignment is already handled by the event definition. No filtering here.
-    },
-    select: function(info) {
-      // Called when the user selects a timeslot. We'll open the modal for a new appointment.
-      openAppointmentModal('add', { start: info.start, end: info.end });
-      scheduleCalendar.unselect();
-    },
-    eventClick: function(info) {
-      // Called when an event is clicked. We'll open the modal for editing the appointment.
-      openAppointmentModal('edit', { event: info.event });
-    }
+    selectAllow: function(selectInfo) { return selectInfo.start.getDay() !== 0; },
+    eventDidMount: function (info) {},
+    select: function(info) { openAppointmentModal('add', { start: info.start, end: info.end }); scheduleCalendar.unselect(); },
+    eventClick: function(info) { openAppointmentModal('edit', { event: info.event }); }
   });
   scheduleCalendar.render();
 }
 
-/**
- * Refresh the events displayed on the calendar.  Called after
- * adding or removing schedule items.
- */
 function refreshCalendar() {
   if (scheduleCalendar) {
     const events = transformSchedulesToEvents();
     scheduleCalendar.removeAllEvents();
-    events.forEach(ev => {
-      scheduleCalendar.addEvent(ev);
-    });
+    events.forEach(ev => scheduleCalendar.addEvent(ev));
   }
 }
 
-/**
- * Render the list of scheduled moves (now just refreshes the calendar).
- */
-function renderSchedules() {
-  refreshCalendar();
-}
+function renderSchedules() { refreshCalendar(); }
 
-// Modal management
-let currentModalMode = null; // 'add' or 'edit'
-let currentEventIndex = null; // index of record being edited, null when adding
+let currentModalMode = null;
+let currentEventIndex = null;
 
-// Populate appointment type select in modal
 function populateModalAppointmentOptions() {
   const select = document.getElementById('modal-type');
   if (!select) return;
@@ -227,7 +165,6 @@ function populateModalAppointmentOptions() {
   });
 }
 
-// Open modal for new or edit
 function openAppointmentModal(mode, data) {
   currentModalMode = mode;
   const modal = document.getElementById('appointment-modal');
@@ -240,7 +177,7 @@ function openAppointmentModal(mode, data) {
   populateModalAppointmentOptions();
   if (mode === 'add') {
     modalTitle.textContent = 'New Appointment';
-    const startDateTime = data.start; // Date object
+    const startDateTime = data.start;
     startInput.value = formatDateTimeForDisplay(startDateTime);
     startInput.dataset.iso = startDateTime.toISOString();
     descInput.value = '';
@@ -263,7 +200,6 @@ function openAppointmentModal(mode, data) {
   modal.style.display = 'flex';
 }
 
-// Close modal and reset state
 function closeAppointmentModal() {
   const modal = document.getElementById('appointment-modal');
   modal.style.display = 'none';
@@ -271,19 +207,10 @@ function closeAppointmentModal() {
   currentEventIndex = null;
 }
 
-// Format date/time to human readable string (e.g., Wed Aug 20, 2025 10:00 AM)
 function formatDateTimeForDisplay(dateObj) {
-  return dateObj.toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true
-  });
+  return dateObj.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-// Save appointment (add or edit) from modal
 async function handleModalSave(e) {
   e.preventDefault();
   const startInput = document.getElementById('modal-start');
@@ -293,7 +220,6 @@ async function handleModalSave(e) {
   const startISO = startInput.dataset.iso;
   const startDateObj = new Date(startISO);
 
-  // compute start date/time in local timezone
   const startYear = startDateObj.getFullYear();
   const startMonth = String(startDateObj.getMonth() + 1).padStart(2, '0');
   const startDay = String(startDateObj.getDate()).padStart(2, '0');
@@ -302,7 +228,6 @@ async function handleModalSave(e) {
   const startDate = `${startYear}-${startMonth}-${startDay}`;
   const startTime = `${startHours}:${startMinutes}`;
 
-  // compute end time as start + 30 minutes in local timezone
   const endDateObj = new Date(startDateObj.getTime() + 30 * 60000);
   const endYear = endDateObj.getFullYear();
   const endMonth = String(endDateObj.getMonth() + 1).padStart(2, '0');
@@ -322,24 +247,15 @@ async function handleModalSave(e) {
     appointmentType: typeSelect.value
   };
 
-  // basic validation
-  if (!record.description || !record.name) {
-    alert('Please provide a description and name.');
-    return;
-  }
-  // Validate time is within allowed range (start between 7:00 and 15:30) and not on Sunday
+  if (!record.description || !record.name) { alert('Please provide a description and name.'); return; }
+
   const hour = startDateObj.getHours();
   const minute = startDateObj.getMinutes();
-  if (
-    startDateObj.getDay() === 0 ||
-    hour < 7 ||
-    hour > 15 ||
-    (hour === 15 && minute > 30)
-  ) {
+  if (startDateObj.getDay() === 0 || hour < 7 || hour > 15 || (hour === 15 && minute > 30)) {
     alert('Invalid start time or day for scheduling.');
     return;
   }
-  // Check overlap with existing events
+
   const existing = getSchedules();
   const newStart = startDateObj;
   const newEnd = endDateObj;
@@ -349,26 +265,24 @@ async function handleModalSave(e) {
     const e1 = new Date(`${item.endDate}T${item.endTime}`);
     return newStart < e1 && newEnd > s1;
   });
-  if (overlap) {
-    alert('This appointment overlaps with an existing one.');
-    return;
-  }
+  if (overlap) { alert('This appointment overlaps with an existing one.'); return; }
 
-  if (currentModalMode === 'add') {
-    await backendCreate(record);
-  } else if (currentModalMode === 'edit' && currentEventIndex !== null) {
-    // Preserve ID for update, send to backend
-    record.id = SCHEDULE_CACHE[currentEventIndex]?.id;
-    await backendUpdate(currentEventIndex, record);
+  try {
+    if (currentModalMode === 'add') {
+      await backendCreate(record);
+    } else if (currentModalMode === 'edit' && currentEventIndex !== null) {
+      record.id = SCHEDULE_CACHE[currentEventIndex]?.id;
+      await backendUpdate(currentEventIndex, record);
+    }
+    closeAppointmentModal();
+    await backendLoadSchedules();
+    renderSchedules();
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Save failed: ' + (err && err.message ? err.message : err));
   }
-
-  // Reload from backend to ensure UI matches canonical data
-  await backendLoadSchedules();
-  renderSchedules();
-  closeAppointmentModal();
 }
 
-// Handle deletion from modal
 async function handleModalDelete() {
   if (currentModalMode === 'edit' && currentEventIndex !== null) {
     await backendDelete(currentEventIndex);
@@ -378,27 +292,18 @@ async function handleModalDelete() {
   }
 }
 
-// Bind modal buttons
 document.addEventListener('DOMContentLoaded', () => {
   const modalForm = document.getElementById('modal-form');
-  if (modalForm) {
-    modalForm.addEventListener('submit', handleModalSave);
-  }
+  if (modalForm) modalForm.addEventListener('submit', handleModalSave);
   const cancelBtn = document.getElementById('modal-cancel');
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', closeAppointmentModal);
-  }
+  if (cancelBtn) cancelBtn.addEventListener('click', closeAppointmentModal);
   const deleteBtn = document.getElementById('modal-delete');
-  if (deleteBtn) {
-    deleteBtn.addEventListener('click', handleModalDelete);
-  }
+  if (deleteBtn) deleteBtn.addEventListener('click', handleModalDelete);
 });
 
-// Initialise the calendar and render existing schedules on load
 initCalendar();
 (async () => { await backendLoadSchedules(); renderSchedules(); })();
 
-// Render the legend of appointment types
 function renderLegend() {
   const legendEl = document.getElementById('legend');
   if (!legendEl) return;
@@ -419,6 +324,4 @@ function renderLegend() {
     legendEl.appendChild(wrap);
   });
 }
-
-// Initialise legend on load
 renderLegend();
