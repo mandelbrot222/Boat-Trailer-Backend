@@ -1,39 +1,47 @@
-// sheets_api.js - revised to avoid CORS preflight with Apps Script
-(async function () {
-  if (!window.SHEETS_API_URL) console.warn('SHEETS_API_URL missing.');
-  if (!window.SHEETS_API_KEY) console.warn('SHEETS_API_KEY missing.');
+// sheets_api.js - Worker-safe client (no key on the browser; Worker injects it)
+(function () {
+  if (!window.SHEETS_API_URL) {
+    console.warn('SHEETS_API_URL missing. Set it in config.js to your Worker URL.');
+  }
 
   function handle(resp) {
     if (!resp.ok) throw new Error('Network error ' + resp.status);
     return resp.json();
   }
 
-  window.SheetsAPI = {
-    // GET list (key as query param; no custom headers)
-    async listSchedules({ from = null, to = null } = {}) {
-      const url = new URL(window.SHEETS_API_URL);
-      url.searchParams.set('action', 'list');
-      url.searchParams.set('key', window.SHEETS_API_KEY);
-      if (from) url.searchParams.set('from', from);
-      if (to) url.searchParams.set('to', to);
+  // Build URL like: <WORKER_URL>?action=list[&from=YYYY-MM-DD][&to=YYYY-MM-DD]
+  function buildListUrl(params = {}) {
+    const url = new URL(window.SHEETS_API_URL);
+    url.searchParams.set('action', 'list');
+    if (params.from) url.searchParams.set('from', params.from);
+    if (params.to)   url.searchParams.set('to', params.to);
+    return url.toString();
+  }
 
-      const resp = await fetch(url.toString(), { method: 'GET' });
+  // Body helper for POST form-encoded (no key included here; Worker adds it)
+  function formBody(obj) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(obj)) {
+      body.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+    }
+    return body;
+  }
+
+  window.SheetsAPI = {
+    // GET list (no key in query string)
+    async listSchedules({ from = null, to = null } = {}) {
+      const resp = await fetch(buildListUrl({ from, to }), { method: 'GET' });
       const json = await handle(resp);
       if (!json.ok) throw new Error(json.error || 'Unknown error');
       return json.rows || [];
     },
 
-    // CREATE (form-encoded body; key included)
+    // CREATE (form-encoded; action + record only)
     async createSchedule(rec) {
-      const body = new URLSearchParams({
-        action: 'create',
-        key: window.SHEETS_API_KEY,
-        record: JSON.stringify(rec),
-      });
       const resp = await fetch(window.SHEETS_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
+        body: formBody({ action: 'create', record: rec }),
       });
       const json = await handle(resp);
       if (!json.ok) throw new Error(json.error || 'Create failed');
@@ -42,15 +50,10 @@
 
     // UPDATE
     async updateSchedule(rec) {
-      const body = new URLSearchParams({
-        action: 'update',
-        key: window.SHEETS_API_KEY,
-        record: JSON.stringify(rec),
-      });
       const resp = await fetch(window.SHEETS_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
+        body: formBody({ action: 'update', record: rec }),
       });
       const json = await handle(resp);
       if (!json.ok) throw new Error(json.error || 'Update failed');
@@ -59,15 +62,10 @@
 
     // DELETE (soft-delete via ID)
     async deleteSchedule(id) {
-      const body = new URLSearchParams({
-        action: 'delete',
-        key: window.SHEETS_API_KEY,
-        id,
-      });
       const resp = await fetch(window.SHEETS_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
+        body: formBody({ action: 'delete', id }),
       });
       const json = await handle(resp);
       if (!json.ok) throw new Error(json.error || 'Delete failed');
