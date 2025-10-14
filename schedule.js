@@ -7,10 +7,8 @@
 // Ensure the user is authenticated before allowing interaction
 ensureLoggedIn();
 
-const SCHEDULE_KEY = 'schedules';
 // === Sheets backend integration ===
 let SCHEDULE_CACHE = []; // in-memory cache from backend
-let SCHEDULE_CACHE_LOADED = false;
 
 async function backendLoadSchedules() {
   const rows = await SheetsAPI.listSchedules({});
@@ -38,7 +36,6 @@ async function backendLoadSchedules() {
       appointmentType: r.Kind || 'Other'
     };
   });
-  SCHEDULE_CACHE_LOADED = true;
   return SCHEDULE_CACHE;
 }
 
@@ -52,6 +49,7 @@ async function backendCreate(record) {
     Name: record.name
   });
   record.id = created.ID;
+  // optimistic update
   SCHEDULE_CACHE.push(record);
 }
 
@@ -68,6 +66,7 @@ async function backendUpdate(index, record) {
     Name: record.name,
     Deleted: false
   });
+  // optimistic update
   SCHEDULE_CACHE[index] = { ...record, id };
 }
 
@@ -78,9 +77,7 @@ async function backendDelete(index) {
   SCHEDULE_CACHE.splice(index, 1);
 }
 
-function getSchedules() {
-  return SCHEDULE_CACHE.slice();
-}
+function getSchedules() { return SCHEDULE_CACHE.slice(); }
 
 const APPOINTMENT_TYPES = [
   { name: 'Launch', color: '#007F7E' },
@@ -132,20 +129,18 @@ function initCalendar() {
     selectable: true,
     selectOverlap: false,
     editable: false,
-    selectAllow: function(selectInfo) { return selectInfo.start.getDay() !== 0; },
-    eventDidMount: function (info) {},
-    select: function(info) { openAppointmentModal('add', { start: info.start, end: info.end }); scheduleCalendar.unselect(); },
-    eventClick: function(info) { openAppointmentModal('edit', { event: info.event }); }
+    selectAllow: (selectInfo) => selectInfo.start.getDay() !== 0,
+    select: (info) => { openAppointmentModal('add', { start: info.start, end: info.end }); scheduleCalendar.unselect(); },
+    eventClick: (info) => { openAppointmentModal('edit', { event: info.event }); }
   });
   scheduleCalendar.render();
 }
 
 function refreshCalendar() {
-  if (scheduleCalendar) {
-    const events = transformSchedulesToEvents();
-    scheduleCalendar.removeAllEvents();
-    events.forEach(ev => scheduleCalendar.addEvent(ev));
-  }
+  if (!scheduleCalendar) return;
+  const events = transformSchedulesToEvents();
+  scheduleCalendar.removeAllEvents();
+  events.forEach(ev => scheduleCalendar.addEvent(ev));
 }
 
 function renderSchedules() { refreshCalendar(); }
@@ -252,8 +247,7 @@ async function handleModalSave(e) {
   const hour = startDateObj.getHours();
   const minute = startDateObj.getMinutes();
   if (startDateObj.getDay() === 0 || hour < 7 || hour > 15 || (hour === 15 && minute > 30)) {
-    alert('Invalid start time or day for scheduling.');
-    return;
+    alert('Invalid start time or day for scheduling.'); return;
   }
 
   const existing = getSchedules();
@@ -275,8 +269,10 @@ async function handleModalSave(e) {
       await backendUpdate(currentEventIndex, record);
     }
     closeAppointmentModal();
-    await backendLoadSchedules();
+    // instant refresh from local cache (no round-trip)
     renderSchedules();
+    // background sync to ensure cache matches sheet (no UI wait)
+    backendLoadSchedules().then(renderSchedules).catch(err => console.warn('Background sync failed:', err));
   } catch (err) {
     console.error('Save failed:', err);
     alert('Save failed: ' + (err && err.message ? err.message : err));
@@ -286,9 +282,9 @@ async function handleModalSave(e) {
 async function handleModalDelete() {
   if (currentModalMode === 'edit' && currentEventIndex !== null) {
     await backendDelete(currentEventIndex);
-    await backendLoadSchedules();
-    renderSchedules();
     closeAppointmentModal();
+    renderSchedules();
+    backendLoadSchedules().then(renderSchedules).catch(err => console.warn('Background sync failed:', err));
   }
 }
 
