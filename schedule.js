@@ -7,6 +7,25 @@
 // Ensure the user is authenticated before allowing interaction
 ensureLoggedIn();
 
+// --- Save button spinner helpers ---
+let isSaving = false;
+function setSavingUI(on) {
+  const saveBtn = document.querySelector('#modal-form button[type="submit"]');
+  if (!saveBtn) return;
+  if (on) {
+    isSaving = true;
+    saveBtn.disabled = true;
+    if (!saveBtn.dataset.originalText) {
+      saveBtn.dataset.originalText = saveBtn.textContent || 'Save';
+    }
+    saveBtn.innerHTML = '<span class="btn-spinner"></span>Saving…';
+  } else {
+    isSaving = false;
+    saveBtn.disabled = false;
+    saveBtn.textContent = saveBtn.dataset.originalText || 'Save';
+  }
+}
+
 // === Sheets backend integration ===
 let SCHEDULE_CACHE = []; // in-memory cache from backend
 
@@ -208,74 +227,82 @@ function formatDateTimeForDisplay(dateObj) {
 
 async function handleModalSave(e) {
   e.preventDefault();
-  const startInput = document.getElementById('modal-start');
-  const descInput = document.getElementById('modal-desc');
-  const nameInput = document.getElementById('modal-name');
-  const typeSelect = document.getElementById('modal-type');
-  const startISO = startInput.dataset.iso;
-  const startDateObj = new Date(startISO);
-
-  const startYear = startDateObj.getFullYear();
-  const startMonth = String(startDateObj.getMonth() + 1).padStart(2, '0');
-  const startDay = String(startDateObj.getDate()).padStart(2, '0');
-  const startHours = String(startDateObj.getHours()).padStart(2, '0');
-  const startMinutes = String(startDateObj.getMinutes()).padStart(2, '0');
-  const startDate = `${startYear}-${startMonth}-${startDay}`;
-  const startTime = `${startHours}:${startMinutes}`;
-
-  const endDateObj = new Date(startDateObj.getTime() + 30 * 60000);
-  const endYear = endDateObj.getFullYear();
-  const endMonth = String(endDateObj.getMonth() + 1).padStart(2, '0');
-  const endDay = String(endDateObj.getDate()).padStart(2, '0');
-  const endHours = String(endDateObj.getHours()).padStart(2, '0');
-  const endMinutes = String(endDateObj.getMinutes()).padStart(2, '0');
-  const endDate = `${endYear}-${endMonth}-${endDay}`;
-  const endTime = `${endHours}:${endMinutes}`;
-
-  const record = {
-    startDate,
-    startTime,
-    endDate,
-    endTime,
-    description: descInput.value.trim(),
-    name: nameInput.value.trim(),
-    appointmentType: typeSelect.value
-  };
-
-  if (!record.description || !record.name) { alert('Please provide a description and name.'); return; }
-
-  const hour = startDateObj.getHours();
-  const minute = startDateObj.getMinutes();
-  if (startDateObj.getDay() === 0 || hour < 7 || hour > 15 || (hour === 15 && minute > 30)) {
-    alert('Invalid start time or day for scheduling.'); return;
-  }
-
-  const existing = getSchedules();
-  const newStart = startDateObj;
-  const newEnd = endDateObj;
-  const overlap = existing.some((item, idx) => {
-    if (currentModalMode === 'edit' && idx === currentEventIndex) return false;
-    const s1 = new Date(`${item.startDate}T${item.startTime}`);
-    const e1 = new Date(`${item.endDate}T${item.endTime}`);
-    return newStart < e1 && newEnd > s1;
-  });
-  if (overlap) { alert('This appointment overlaps with an existing one.'); return; }
-
+  if (isSaving) return;
+  setSavingUI(true);
   try {
+    const startInput = document.getElementById('modal-start');
+    const descInput = document.getElementById('modal-desc');
+    const nameInput = document.getElementById('modal-name');
+    const typeSelect = document.getElementById('modal-type');
+    const startISO = startInput.dataset.iso;
+    const startDateObj = new Date(startISO);
+
+    const startYear = startDateObj.getFullYear();
+    const startMonth = String(startDateObj.getMonth() + 1).padStart(2, '0');
+    const startDay = String(startDateObj.getDate()).padStart(2, '0');
+    const startHours = String(startDateObj.getHours()).padStart(2, '0');
+    const startMinutes = String(startDateObj.getMinutes()).padStart(2, '0');
+    const startDate = `${startYear}-${startMonth}-${startDay}`;
+    const startTime = `${startHours}:${startMinutes}`;
+
+    const endDateObj = new Date(startDateObj.getTime() + 30 * 60000);
+    const endYear = endDateObj.getFullYear();
+    const endMonth = String(endDateObj.getMonth() + 1).padStart(2, '0');
+    const endDay = String(endDateObj.getDate()).padStart(2, '0');
+    const endHours = String(endDateObj.getHours()).padStart(2, '0');
+    const endMinutes = String(endDateObj.getMinutes()).padStart(2, '0');
+    const endDate = `${endYear}-${endMonth}-${endDay}`;
+    const endTime = `${endHours}:${endMinutes}`;
+
+    const record = {
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      description: descInput.value.trim(),
+      name: nameInput.value.trim(),
+      appointmentType: typeSelect.value
+    };
+
+    if (!record.description || !record.name) {
+      alert('Please provide a description and name.');
+      return;
+    }
+    const hour = startDateObj.getHours();
+    const minute = startDateObj.getMinutes();
+    if (startDateObj.getDay() === 0 || hour < 7 || hour > 15 || (hour === 15 && minute > 30)) {
+      alert('Invalid start time or day for scheduling.');
+      return;
+    }
+    const existing = getSchedules();
+    const newStart = startDateObj;
+    const newEnd = endDateObj;
+    const overlap = existing.some((item, idx) => {
+      if (currentModalMode === 'edit' && idx === currentEventIndex) return false;
+      const s1 = new Date(`${item.startDate}T${item.startTime}`);
+      const e1 = new Date(`${item.endDate}T${item.endTime}`);
+      return newStart < e1 && newEnd > s1;
+    });
+    if (overlap) {
+      alert('This appointment overlaps with an existing one.');
+      return;
+    }
+
     if (currentModalMode === 'add') {
       await backendCreate(record);
     } else if (currentModalMode === 'edit' && currentEventIndex !== null) {
       record.id = SCHEDULE_CACHE[currentEventIndex]?.id;
       await backendUpdate(currentEventIndex, record);
     }
-    closeAppointmentModal();
-    // instant refresh from local cache (no round-trip)
+
+    await backendLoadSchedules();
     renderSchedules();
-    // background sync to ensure cache matches sheet (no UI wait)
-    backendLoadSchedules().then(renderSchedules).catch(err => console.warn('Background sync failed:', err));
+    closeAppointmentModal();
   } catch (err) {
     console.error('Save failed:', err);
     alert('Save failed: ' + (err && err.message ? err.message : err));
+  } finally {
+    setSavingUI(false);
   }
 }
 

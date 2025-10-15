@@ -358,3 +358,17 @@ ul#moveouts-list li button:hover {
   display: block;
   opacity: 0.9;
 }
+
+/* --- Save button spinner --- */
+.btn-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.15em;
+  animation: btnspin 0.8s linear infinite;
+}
+@keyframes btnspin { to { transform: rotate(360deg); } }
